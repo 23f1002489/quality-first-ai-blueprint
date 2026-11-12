@@ -1,0 +1,38 @@
+site_name: "The Quality-First AI Blueprint"
+site_description: "Engineering Reliability in Agentic Systems"
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.footer        # Adds Previous / Next chapter buttons at bottom
+    - search.suggest
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences
+
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - "Part I: The Paradigm Shift":
+      - "1. The Death of Deterministic Testing": part-1/chapter-01.md
+      - "2. Anatomy of a Production-Grade Agent": part-1/chapter-02.md
