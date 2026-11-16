@@ -97,7 +97,88 @@ To keep multi-agent topologies resilient at enterprise scale, apply three archit
 
 When every handoff between agents is governed by an explicit schema contract and tracked via distributed correlation IDs, multi-agent systems stop behaving like unpredictable improvisational theater and start operating like a resilient assembly line.
 
+## 2.6 Reference Architecture: A Policy-Governed Incident Response Agent
+
+To see how these architectural principles come together in practice, let us examine an end-to-end blueprint for a production **HTTPS Incident Response Agent**. 
+
+In a traditional automated runbook, a monitoring alert triggers a rigid script. When an autonomous agent is introduced, the system must investigate ambiguous symptoms (such as elevated HTTP 503 errors or latency spikes), execute read-only diagnostics, synthesize a root-cause hypothesis, and propose a remediation—without ever holding unchecked execution privileges over production infrastructure.
+
+### The Containment Architecture
+
+Rather than allowing an LLM to execute arbitrary shell commands or mutate state directly, the system separates **probabilistic investigation** from **deterministic authorization** across six distinct layers:
+
+```text
+[ Incident Sources: Alerts / Webhooks / API ]
+                     │
+                     ▼
+[ FastAPI Orchestration & Auth Middleware ] ◄── API Key & Route Scoping
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+[ Diagnostic ] [ AI Reasoning ] [ Policy Engine ]
+[  Adapters  ] [    Core      ] [ & Approval Gate ]
+(SSRF-Guarded) (Evidence-Bound) (Allowlist + HITL)
+        │            │            │
+        └────────────┼────────────┘
+                     ▼
+     [ Durable PostgreSQL Evidence Store ]
+  (Incidents · Traces · Before/After Telemetry)
 ---
+Enforcing Separation of Duties in CodeThe cardinal rule of this architecture is simple: the LLM recommends actions, but a deterministic policy engine and human approval gate authorize them.   SSRF-Protected Diagnostic Adapters:
+Before the agent probes a target URL to capture HTTP status codes, TLS handshake health, and millisecond latency, deterministic network guards validate the destination against an explicit host allowlist, block private/loopback IP ranges, enforce HTTPS port 443, and disable automatic redirects.   Evidence-Grounded Hypothesis Generation:
+The reasoning core receives only structured diagnostic records (e.g., DIAG-A1B2C3) and must return a schema-validated payload containing its probable_cause, a calibrated confidence score ($0.0$ to $1.0$), explicit evidence IDs, and known limitations. Any response citing a non-existent diagnostic ID is rejected by the validation layer.   Immutable Approval Binding:
+When a remediation is proposed (such as scaling a service or capturing an evidence snapshot), the system creates an action record in a pending_approval state tied to a specific investigation_id, action_type, and parameter set. Once approved by an operator, the execution layer enforces single-use idempotency so the action cannot be replayed or altered post-approval.   Decoupling Execution Status from Recovery Verification:
+A classic failure mode in automated remediation is equating command success (exit_code: 0) with service recovery. After executing an approved action, the agent runs an independent post-action diagnostic probe and stores a correlated before/after telemetry record—explicitly distinguishing between local execution success and verified remote recovery.!!! warning "Production War Story: Middleware Ordering & Stateless Cloud Traps"
+When moving an agentic service from a local prototype to a managed cloud runtime, two subtle infrastructure traps routinely surface:
+
+from typing import Literal
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+app = FastAPI()
+
+# 1. Deterministic Policy Registry (Not modifiable by the LLM)
+ALLOWED_ACTIONS = {
+    "capture_evidence_snapshot": {"requires_approval": True},
+    "escalate_to_oncall": {"requires_approval": False},
+}
+
+# 2. Schema-Validated LLM Investigation Contract
+class InvestigationProposal(BaseModel):
+    incident_id: str
+    probable_cause: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence_ids: list[str] = Field(min_length=1)
+    recommended_action: str
+
+# 3. Deterministic Policy & Approval Gate
+@app.post("/incidents/{incident_id}/actions")
+async def request_action(incident_id: str, proposal: InvestigationProposal):
+    # Guard 1: Reject actions outside the deterministic allowlist
+    policy = ALLOWED_ACTIONS.get(proposal.recommended_action)
+    if not policy:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Action '{proposal.recommended_action}' is prohibited by policy."
+        )
+
+    # Guard 2: Verify cited diagnostic IDs exist in the evidence store
+    if not all(diag_id.startswith("DIAG-") for diag_id in proposal.evidence_ids):
+        raise HTTPException(
+            status_code=422,
+            detail="Proposal must cite valid, persisted diagnostic evidence IDs."
+        )
+
+    # Guard 3: Bind to an explicit approval state before any execution occurs
+    status: Literal["pending_approval", "queued"] = (
+        "pending_approval" if policy["requires_approval"] else "queued"
+    )
+    return {
+        "incident_id": incident_id,
+        "action": proposal.recommended_action,
+        "status": status,
+        "evidence_ids": proposal.evidence_ids,
+    }
 
 !!! abstract "Chapter 2 Key Takeaways"
     * **The LLM is a component, not the architecture:** Production reliability comes from wrapping probabilistic reasoning inside deterministic schemas, state machines, and execution budgets.
